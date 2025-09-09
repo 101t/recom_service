@@ -1,0 +1,69 @@
+version: '3.8'
+
+services:
+  recommendation-api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - RUST_LOG=info
+      - QDRANT_URL=http://qdrant:6333
+      - EMBEDDER_API_KEY=${EMBEDDER_API_KEY}
+      - DELTA_TABLE_PATH=/data/delta/tables
+    volumes:
+      - recommendation-data:/data
+    depends_on:
+      qdrant:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - recommendation-network
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-storage:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    networks:
+      - recommendation-network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - recommendation-network
+
+volumes:
+  recommendation-data:
+    driver: local
+  qdrant-storage:
+    driver: local
+  redis-data:
+    driver: local
+
+networks:
+  recommendation-network:
+    driver: bridge

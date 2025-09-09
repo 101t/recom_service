@@ -1,0 +1,28 @@
+[package]
+name = "recommendation-service"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+actix-web = "4.4"
+actix-multipart = "0.7.2"
+actix-cors = "0.7"
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+polars = { version = "0.50.0", features = ["lazy", "parquet", "json", "random"] }
+qdrant-client = "1.8"
+reqwest = { version = "0.12.23", features = ["json"] }
+anyhow = "1.0"
+futures-util = "0.3"
+uuid = { version = "1.4", features = ["v4"] }
+dotenv = "0.15"
+env_logger = "0.11.8"
+log = "0.4"
+async-trait = "0.1"
+bytes = "1.0"
+config = "0.15.15"
+csv = "1.3"
+deltalake = {"version" = "0.28.1", features = ["datafusion"] }
+chrono = "0.4.41"
+arrow = "56.1.0"
