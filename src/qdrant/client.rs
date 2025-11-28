@@ -19,12 +19,23 @@ pub struct QdrantClient {
 
 impl QdrantClient {
     pub async fn new() -> Self {
-        let host = std::env::var("QDRANT_HOST").unwrap_or_else(|_| "localhost".to_string());
-        let port = std::env::var("QDRANT_PORT").unwrap_or_else(|_| "6334".to_string());
+        let host = std::env::var("QDRANT_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
+        let port = std::env::var("QDRANT_GRPC_PORT").unwrap_or_else(|_| "6337".to_string());
+        let api_key = std::env::var("QDRANT_API_KEY").ok();
+        let use_https = std::env::var("QDRANT_HTTPS")
+            .map(|v| v.to_lowercase() == "true")
+            .unwrap_or(false);
         
-        let client = Qdrant::from_url(&format!("http://{}:{}", host, port))
-            .build()
-            .expect("Failed to create Qdrant client");
+        let scheme = if use_https { "https" } else { "http" };
+        let url = format!("{}://{}:{}", scheme, host, port);
+        
+        let mut builder = Qdrant::from_url(&url).skip_compatibility_check();
+        
+        if let Some(key) = api_key {
+            builder = builder.api_key(key);
+        }
+        
+        let client = builder.build().expect("Failed to create Qdrant client");
             
         Self {
             client,

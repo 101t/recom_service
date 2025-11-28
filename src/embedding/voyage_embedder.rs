@@ -29,8 +29,10 @@ pub struct VoyageEmbedder {
 
 impl VoyageEmbedder {
     pub fn new() -> Self {
-        let api_key = env::var("VOYAGE_API_KEY")
-            .expect("VOYAGE_API_KEY must be set");
+        let api_key = env::var("VOYAGE_API_KEY").unwrap_or_else(|_| {
+            log::warn!("VOYAGE_API_KEY not set - embedder will fail on requests");
+            String::new()
+        });
             
         Self {
             client: Client::new(),
@@ -66,29 +68,29 @@ impl Embedder for VoyageEmbedder {
             None => anyhow::bail!("No embedding data received"),
         }
     }
-    
-    async fn batch_embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        let request = EmbeddingRequest {
-            model: self.model.clone(),
-            input: texts.to_vec(),
-        };
+
+    // async fn batch_embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+    //     let request = EmbeddingRequest {
+    //         model: self.model.clone(),
+    //         input: texts.to_vec(),
+    //     };
         
-        let response = self.client
-            .post("https://api.voyageai.com/v1/embeddings")
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .json(&request)
-            .send()
-            .await?;
+    //     let response = self.client
+    //         .post("https://api.voyageai.com/v1/embeddings")
+    //         .header("Authorization", format!("Bearer {}", self.api_key))
+    //         .json(&request)
+    //         .send()
+    //         .await?;
             
-        if !response.status().is_success() {
-            anyhow::bail!("API request failed: {}", response.status());
-        }
+    //     if !response.status().is_success() {
+    //         anyhow::bail!("API request failed: {}", response.status());
+    //     }
         
-        let embedding_response: EmbeddingResponse = response.json().await?;
+    //     let embedding_response: EmbeddingResponse = response.json().await?;
         
-        Ok(embedding_response.data
-            .into_iter()
-            .map(|data| data.embedding)
-            .collect())
-    }
+    //     Ok(embedding_response.data
+    //         .into_iter()
+    //         .map(|data| data.embedding)
+    //         .collect())
+    // }
 }

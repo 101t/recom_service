@@ -1,14 +1,13 @@
 use anyhow::{Context, Result};
-use deltalake::kernel::engine::arrow_conversion::TryIntoArrow;
-use deltalake::{
-    arrow::record_batch::RecordBatch,
-    *
-};
+use deltalake::arrow::array::RecordBatch;
+use deltalake::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use deltalake::*;
+
 use polars::prelude::*;
-use polars::prelude::LazyFrame;
 
 use serde_json::Value;
-use std::{collections::HashMap};
+use bytes::Bytes;
+use std::collections::HashMap;
 use uuid::Uuid;
 use chrono::Utc;
 
@@ -33,7 +32,7 @@ impl DeltaTableHandler {
     
     pub async fn process_file(&self, file_path: &str) -> Result<String> {
         let dataset_id = Uuid::new_v4().to_string();
-        
+
         // Read the file based on extension
         let df = match file_path.split('.').last() {
             Some("csv") => LazyCsvReader::new(PlPath::from_str(file_path)).finish(),
@@ -45,26 +44,19 @@ impl DeltaTableHandler {
             lit(dataset_id.clone()).alias("dataset_id"),
             lit(Utc::now().to_rfc3339()).alias("processed_at"),
         ]);
-        
-        // Collect the DataFrame and convert to Arrow record batches
+
+        // Collect the DataFrame
         let collected_df = df.collect().context("Failed to collect DataFrame")?;
-        
-        // Convert Polars DataFrame to Arrow record batches
-        // let batches: Vec<RecordBatch> = collected_df
-        //     .try_into_arrow(CompatLevel::Default)
-        //     .context("Failed to convert Polars DataFrame to Arrow")?;
-        // Convert Polars DataFrame to Arrow record batches
-        let batches = collected_df
-            .iter()
-            .map(|s| s.to_arrow())
-            .collect::<Result<Vec<_>, _>>()
-            .context("Failed to convert to Arrow")?;
-            
-        // Write to Delta table using the correct API
+
+        // Convert Polars DataFrame to Arrow record batches via Parquet serialization
+        let batches = polars_to_arrow_batches(collected_df)
+            .context("Failed to convert Polars DataFrame to Arrow RecordBatches")?;
+
+        // Write to Delta table
         let table = deltalake::open_table(&self.table_path)
             .await
             .context("Failed to open Delta table")?;
-        
+
         DeltaOps(table)
             .write(batches)
             .with_save_mode(deltalake::protocol::SaveMode::Append)
@@ -105,4 +97,28 @@ impl DeltaTableHandler {
         
         Ok(info)
     }
+}
+
+/// Convert a Polars DataFrame to standard Arrow RecordBatches via Parquet serialization.
+/// This bridges polars-arrow and the standard arrow crate used by Delta Lake.
+fn polars_to_arrow_batches(mut df: DataFrame) -> Result<Vec<RecordBatch>> {
+    // Write DataFrame to Parquet in memory
+    let mut buffer = Vec::new();
+    ParquetWriter::new(&mut buffer)
+        .finish(&mut df)
+        .context("Failed to write DataFrame to Parquet buffer")?;
+
+    // Read back using standard arrow-parquet reader (Bytes implements ChunkReader)
+    let bytes = Bytes::from(buffer);
+    let reader = ParquetRecordBatchReaderBuilder::try_new(bytes)
+        .context("Failed to create Parquet reader")?
+        .build()
+        .context("Failed to build Parquet record batch reader")?;
+
+    let batches: Vec<RecordBatch> = reader
+        .into_iter()
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .context("Failed to read Arrow record batches from Parquet")?;
+
+    Ok(batches)
 }
