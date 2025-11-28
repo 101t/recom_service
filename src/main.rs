@@ -1,7 +1,6 @@
 mod api;
 mod data;
 mod embedding;
-//mod models;
 mod qdrant;
 
 use actix_cors::Cors;
@@ -10,6 +9,48 @@ use data::delta_handler::DeltaTableHandler;
 use embedding::voyage_embedder::VoyageEmbedder;
 use qdrant::client::QdrantClient;
 use std::sync::Arc;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
+
+use api::{
+    health::{self, HealthResponse},
+    recommendations::{self, RecommendationRequest, Recommendation, RecommendationResponse, ErrorResponse},
+    datasets::{self, UploadResponse, DatasetListResponse, DatasetInfoResponse},
+};
+
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "Recommendation Service API",
+        description = "Vector-based recommendation service with Delta Lake storage",
+        version = "0.1.0",
+        contact(name = "API Support"),
+        license(name = "MIT")
+    ),
+    paths(
+        health::health_check,
+        recommendations::get_recommendations,
+        datasets::upload_dataset,
+        datasets::list_datasets,
+        datasets::get_dataset_info,
+    ),
+    components(schemas(
+        HealthResponse,
+        RecommendationRequest,
+        Recommendation,
+        RecommendationResponse,
+        ErrorResponse,
+        UploadResponse,
+        DatasetListResponse,
+        DatasetInfoResponse,
+    )),
+    tags(
+        (name = "Health", description = "Health check endpoints"),
+        (name = "Recommendations", description = "Recommendation endpoints"),
+        (name = "Datasets", description = "Dataset management endpoints")
+    )
+)]
+struct ApiDoc;
 
 #[derive(Clone)]
 pub struct AppState {
@@ -32,6 +73,11 @@ async fn main() -> std::io::Result<()> {
         embedder,
         delta_handler,
     };
+
+    let openapi = ApiDoc::openapi();
+    
+    log::info!("Starting server at http://0.0.0.0:8000");
+    log::info!("Swagger UI available at http://0.0.0.0:8000/docs/");
     
     // Start HTTP server
     HttpServer::new(move || {
@@ -45,8 +91,12 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(app_state.clone()))
             .wrap(cors)
             .configure(api::config)
+            .service(
+                SwaggerUi::new("/docs/{_:.*}")
+                    .url("/api-docs/openapi.json", openapi.clone())
+            )
     })
-    .bind("0.0.0.0:8080")?
+    .bind("0.0.0.0:8000")?
     .run()
     .await
 }

@@ -1,13 +1,48 @@
 use actix_multipart::Multipart;
 use actix_web::{post, web, HttpResponse, get};
 use futures_util::{stream::StreamExt, TryStreamExt};
+use serde::Serialize;
 use serde_json::json;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::AppState;
 
+#[derive(Debug, Serialize, ToSchema)]
+pub struct UploadResponse {
+    /// Operation status
+    pub status: String,
+    /// Success message
+    pub message: String,
+    /// Generated dataset ID
+    pub dataset_id: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DatasetListResponse {
+    /// List of datasets
+    pub datasets: Vec<serde_json::Value>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DatasetInfoResponse {
+    /// Dataset information
+    pub dataset: serde_json::Value,
+}
+
+/// Upload a dataset file (CSV, JSON, or Parquet)
+#[utoipa::path(
+    post,
+    path = "/api/v1/datasets/upload",
+    tag = "Datasets",
+    responses(
+        (status = 200, description = "File uploaded successfully", body = UploadResponse),
+        (status = 400, description = "Invalid file type"),
+        (status = 500, description = "Internal server error")
+    )
+)]
 #[post("/datasets/upload")]
 pub async fn upload_dataset(
     mut payload: Multipart,
@@ -68,6 +103,16 @@ pub async fn upload_dataset(
     }))
 }
 
+/// List all available datasets
+#[utoipa::path(
+    get,
+    path = "/api/v1/datasets",
+    tag = "Datasets",
+    responses(
+        (status = 200, description = "List of datasets", body = DatasetListResponse),
+        (status = 500, description = "Internal server error")
+    )
+)]
 #[get("/datasets")]
 pub async fn list_datasets(app_state: web::Data<AppState>) -> HttpResponse {
     match app_state.delta_handler.list_datasets().await {
@@ -78,6 +123,19 @@ pub async fn list_datasets(app_state: web::Data<AppState>) -> HttpResponse {
     }
 }
 
+/// Get information about a specific dataset
+#[utoipa::path(
+    get,
+    path = "/api/v1/datasets/{dataset_id}",
+    tag = "Datasets",
+    params(
+        ("dataset_id" = String, Path, description = "Dataset unique identifier")
+    ),
+    responses(
+        (status = 200, description = "Dataset information", body = DatasetInfoResponse),
+        (status = 500, description = "Internal server error")
+    )
+)]
 #[get("/datasets/{dataset_id}")]
 pub async fn get_dataset_info(
     path: web::Path<String>,
