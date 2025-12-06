@@ -155,3 +155,77 @@ fn is_valid_file_type(filename: &str) -> bool {
     let ext = filename.split('.').last().unwrap_or("").to_lowercase();
     matches!(ext.as_str(), "csv" | "json" | "parquet")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_valid_file_type_csv() {
+        assert!(is_valid_file_type("data.csv"));
+        assert!(is_valid_file_type("data.CSV"));
+        assert!(is_valid_file_type("my_file.data.csv"));
+    }
+
+    #[test]
+    fn test_is_valid_file_type_json() {
+        assert!(is_valid_file_type("data.json"));
+        assert!(is_valid_file_type("data.JSON"));
+        assert!(is_valid_file_type("config.data.json"));
+    }
+
+    #[test]
+    fn test_is_valid_file_type_parquet() {
+        assert!(is_valid_file_type("data.parquet"));
+        assert!(is_valid_file_type("data.PARQUET"));
+        assert!(is_valid_file_type("table.data.parquet"));
+    }
+
+    #[test]
+    fn test_is_valid_file_type_invalid() {
+        assert!(!is_valid_file_type("data.txt"));
+        assert!(!is_valid_file_type("data.xlsx"));
+        assert!(!is_valid_file_type("data.xml"));
+        assert!(!is_valid_file_type("noextension"));
+        assert!(!is_valid_file_type(""));
+    }
+
+    #[test]
+    fn test_upload_response_serialization() {
+        let response = UploadResponse {
+            status: "success".to_string(),
+            message: "File uploaded".to_string(),
+            dataset_id: "test-uuid-123".to_string(),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("success"));
+        assert!(json.contains("File uploaded"));
+        assert!(json.contains("test-uuid-123"));
+    }
+
+    #[test]
+    fn test_dataset_list_response_serialization() {
+        let response = DatasetListResponse {
+            datasets: vec![
+                serde_json::json!({"id": "dataset1"}),
+                serde_json::json!({"id": "dataset2"}),
+            ],
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("dataset1"));
+        assert!(json.contains("dataset2"));
+    }
+
+    #[test]
+    fn test_dataset_info_response_serialization() {
+        let response = DatasetInfoResponse {
+            dataset: serde_json::json!({
+                "id": "test-dataset",
+                "row_count": 100
+            }),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("test-dataset"));
+        assert!(json.contains("100"));
+    }
+}

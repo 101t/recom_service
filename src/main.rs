@@ -6,7 +6,9 @@ mod qdrant;
 use actix_cors::Cors;
 use actix_web::{web, App, HttpServer};
 use data::delta_handler::DeltaTableHandler;
+use embedding::local_embedder::LocalEmbedder;
 use embedding::voyage_embedder::VoyageEmbedder;
+use embedding::Embedder;
 use qdrant::client::QdrantClient;
 use std::sync::Arc;
 use utoipa::OpenApi;
@@ -55,7 +57,7 @@ struct ApiDoc;
 #[derive(Clone)]
 pub struct AppState {
     pub qdrant_client: Arc<QdrantClient>,
-    pub embedder: Arc<VoyageEmbedder>,
+    pub embedder: Arc<dyn Embedder>,
     pub delta_handler: Arc<DeltaTableHandler>,
 }
 
@@ -65,7 +67,22 @@ async fn main() -> std::io::Result<()> {
     
     // Initialize components
     let qdrant_client = Arc::new(QdrantClient::new().await);
-    let embedder = Arc::new(VoyageEmbedder::new());
+    
+    // Select embedder based on environment variable
+    // USE_LOCAL_EMBEDDER=true uses the local FastEmbed service (default)
+    // USE_LOCAL_EMBEDDER=false uses Voyage AI (requires VOYAGE_API_KEY)
+    let use_local = std::env::var("USE_LOCAL_EMBEDDER")
+        .map(|v| v.to_lowercase() != "false")
+        .unwrap_or(true);
+    
+    let embedder: Arc<dyn Embedder> = if use_local {
+        log::info!("Using local FastEmbed service for embeddings");
+        Arc::new(LocalEmbedder::new())
+    } else {
+        log::info!("Using Voyage AI for embeddings");
+        Arc::new(VoyageEmbedder::new())
+    };
+    
     let delta_handler = Arc::new(DeltaTableHandler::new().await);
     
     let app_state = AppState {

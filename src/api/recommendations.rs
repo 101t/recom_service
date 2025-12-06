@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use utoipa::ToSchema;
 
-use crate::{embedding::Embedder, AppState};
+use crate::AppState;
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct RecommendationRequest {
@@ -86,5 +86,100 @@ pub async fn get_recommendations(
         Err(e) => HttpResponse::InternalServerError().json(json!({
             "error": format!("Failed to get recommendations: {}", e)
         })),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_recommendation_request_deserialization() {
+        let json = r#"{
+            "query": "find similar products",
+            "dataset_id": "dataset-123",
+            "limit": 5
+        }"#;
+        let request: RecommendationRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.query, "find similar products");
+        assert_eq!(request.dataset_id, Some("dataset-123".to_string()));
+        assert_eq!(request.limit, Some(5));
+        assert!(request.filters.is_none());
+    }
+
+    #[test]
+    fn test_recommendation_request_minimal() {
+        let json = r#"{"query": "test query"}"#;
+        let request: RecommendationRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.query, "test query");
+        assert!(request.dataset_id.is_none());
+        assert!(request.limit.is_none());
+        assert!(request.filters.is_none());
+    }
+
+    #[test]
+    fn test_recommendation_request_with_filters() {
+        let json = r#"{
+            "query": "search",
+            "filters": {"category": "electronics", "brand": "apple"}
+        }"#;
+        let request: RecommendationRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.query, "search");
+        let filters = request.filters.unwrap();
+        assert_eq!(filters["category"], "electronics");
+        assert_eq!(filters["brand"], "apple");
+    }
+
+    #[test]
+    fn test_recommendation_serialization() {
+        let recommendation = Recommendation {
+            id: "item-123".to_string(),
+            score: 0.95,
+            payload: json!({"name": "Test Product", "price": 99.99}),
+        };
+        let json = serde_json::to_string(&recommendation).unwrap();
+        assert!(json.contains("item-123"));
+        assert!(json.contains("0.95"));
+        assert!(json.contains("Test Product"));
+    }
+
+    #[test]
+    fn test_recommendation_response_serialization() {
+        let response = RecommendationResponse {
+            recommendations: vec![
+                Recommendation {
+                    id: "1".to_string(),
+                    score: 0.9,
+                    payload: json!({"name": "Product A"}),
+                },
+                Recommendation {
+                    id: "2".to_string(),
+                    score: 0.8,
+                    payload: json!({"name": "Product B"}),
+                },
+            ],
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("Product A"));
+        assert!(json.contains("Product B"));
+        assert!(json.contains("0.9"));
+        assert!(json.contains("0.8"));
+    }
+
+    #[test]
+    fn test_error_response_serialization() {
+        let error = ErrorResponse {
+            error: "Something went wrong".to_string(),
+        };
+        let json = serde_json::to_string(&error).unwrap();
+        assert!(json.contains("Something went wrong"));
+    }
+
+    #[test]
+    fn test_default_limit() {
+        let json = r#"{"query": "test"}"#;
+        let request: RecommendationRequest = serde_json::from_str(json).unwrap();
+        let limit = request.limit.unwrap_or(10);
+        assert_eq!(limit, 10);
     }
 }

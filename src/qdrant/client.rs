@@ -178,3 +178,90 @@ pub struct SearchResult {
     pub score: f32,
     pub payload: JsonValue,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_search_result_creation() {
+        let result = SearchResult {
+            id: "test-id-123".to_string(),
+            score: 0.95,
+            payload: json!({"name": "Test Item", "category": "electronics"}),
+        };
+        assert_eq!(result.id, "test-id-123");
+        assert!((result.score - 0.95).abs() < f32::EPSILON);
+        assert_eq!(result.payload["name"], "Test Item");
+        assert_eq!(result.payload["category"], "electronics");
+    }
+
+    #[test]
+    fn test_search_result_with_empty_payload() {
+        let result = SearchResult {
+            id: "empty-payload".to_string(),
+            score: 0.5,
+            payload: json!({}),
+        };
+        assert_eq!(result.id, "empty-payload");
+        assert!(result.payload.as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_search_result_with_null_payload() {
+        let result = SearchResult {
+            id: "null-payload".to_string(),
+            score: 0.0,
+            payload: JsonValue::Null,
+        };
+        assert!(result.payload.is_null());
+    }
+
+    #[test]
+    fn test_search_result_with_complex_payload() {
+        let result = SearchResult {
+            id: "complex".to_string(),
+            score: 0.88,
+            payload: json!({
+                "title": "Product",
+                "price": 99.99,
+                "tags": ["electronics", "sale"],
+                "metadata": {
+                    "created_at": "2024-01-01",
+                    "updated_at": "2024-06-01"
+                }
+            }),
+        };
+        assert_eq!(result.payload["title"], "Product");
+        assert_eq!(result.payload["tags"][0], "electronics");
+        assert_eq!(result.payload["metadata"]["created_at"], "2024-01-01");
+    }
+
+    #[test]
+    fn test_search_result_score_boundaries() {
+        // Test with minimum score
+        let min_result = SearchResult {
+            id: "min".to_string(),
+            score: 0.0,
+            payload: json!({}),
+        };
+        assert_eq!(min_result.score, 0.0);
+
+        // Test with maximum score
+        let max_result = SearchResult {
+            id: "max".to_string(),
+            score: 1.0,
+            payload: json!({}),
+        };
+        assert_eq!(max_result.score, 1.0);
+
+        // Test with negative score (dot product can be negative)
+        let neg_result = SearchResult {
+            id: "neg".to_string(),
+            score: -0.5,
+            payload: json!({}),
+        };
+        assert!(neg_result.score < 0.0);
+    }
+}
