@@ -5,7 +5,8 @@ mod qdrant;
 
 use actix_cors::Cors;
 use actix_web::{web, App, HttpServer};
-use data::delta_handler::DeltaTableHandler;
+use data::dataset_handler::DatasetHandler;
+use data::prediction_logger::PredictionLogger;
 use embedding::local_embedder::LocalEmbedder;
 use embedding::voyage_embedder::VoyageEmbedder;
 use embedding::Embedder;
@@ -17,14 +18,16 @@ use utoipa_swagger_ui::SwaggerUi;
 use api::{
     health::{self, HealthResponse},
     recommendations::{self, RecommendationRequest, Recommendation, RecommendationResponse, ErrorResponse},
-    datasets::{self, UploadResponse, DatasetListResponse, DatasetInfoResponse},
+    datasets::{self, UploadResponse, DatasetListResponse, DatasetInfoResponse, DeleteResponse},
+    predictions,
 };
+use data::prediction_logger::{PredictionLog, PredictionLogListResponse};
 
 #[derive(OpenApi)]
 #[openapi(
     info(
         title = "Recommendation Service API",
-        description = "Vector-based recommendation service with Delta Lake storage",
+        description = "Vector-based recommendation service with Parquet dataset storage and Qdrant vector database",
         version = "0.1.0",
         contact(name = "API Support"),
         license(name = "MIT")
@@ -35,6 +38,9 @@ use api::{
         datasets::upload_dataset,
         datasets::list_datasets,
         datasets::get_dataset_info,
+        datasets::delete_dataset,
+        predictions::list_prediction_logs,
+        predictions::export_prediction_logs,
     ),
     components(schemas(
         HealthResponse,
@@ -45,11 +51,15 @@ use api::{
         UploadResponse,
         DatasetListResponse,
         DatasetInfoResponse,
+        DeleteResponse,
+        PredictionLog,
+        PredictionLogListResponse,
     )),
     tags(
         (name = "Health", description = "Health check endpoints"),
         (name = "Recommendations", description = "Recommendation endpoints"),
-        (name = "Datasets", description = "Dataset management endpoints")
+        (name = "Datasets", description = "Dataset management endpoints"),
+        (name = "Predictions", description = "Prediction log endpoints")
     )
 )]
 struct ApiDoc;
@@ -58,11 +68,14 @@ struct ApiDoc;
 pub struct AppState {
     pub qdrant_client: Arc<QdrantClient>,
     pub embedder: Arc<dyn Embedder>,
-    pub delta_handler: Arc<DeltaTableHandler>,
+    pub dataset_handler: Arc<DatasetHandler>,
+    pub prediction_logger: Arc<PredictionLogger>,
 }
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // Load .env file before anything else
+    dotenvy::dotenv().ok();
     env_logger::init();
     
     // Initialize components
@@ -83,12 +96,14 @@ async fn main() -> std::io::Result<()> {
         Arc::new(VoyageEmbedder::new())
     };
     
-    let delta_handler = Arc::new(DeltaTableHandler::new().await);
+    let dataset_handler = Arc::new(DatasetHandler::new());
+    let prediction_logger = Arc::new(PredictionLogger::new());
     
     let app_state = AppState {
         qdrant_client,
         embedder,
-        delta_handler,
+        dataset_handler,
+        prediction_logger,
     };
 
     let openapi = ApiDoc::openapi();

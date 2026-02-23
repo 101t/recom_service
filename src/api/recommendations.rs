@@ -55,6 +55,8 @@ pub async fn get_recommendations(
     req: web::Json<RecommendationRequest>,
     app_state: web::Data<AppState>,
 ) -> HttpResponse {
+    let start = std::time::Instant::now();
+
     // Generate embedding for the query
     let embedding = match (*app_state.embedder).embed(&req.query).await {
         Ok(emb) => emb,
@@ -70,7 +72,7 @@ pub async fn get_recommendations(
     let filters = req.filters.clone();
     let dataset_id = req.dataset_id.clone();
     
-    match app_state.qdrant_client.search(embedding, limit, filters, dataset_id).await {
+    match app_state.qdrant_client.search(embedding, limit, filters, dataset_id.clone()).await {
         Ok(results) => {
             let recommendations: Vec<Recommendation> = results
                 .into_iter()
@@ -80,8 +82,31 @@ pub async fn get_recommendations(
                     payload: point.payload,
                 })
                 .collect();
+
+            let latency_ms = start.elapsed().as_millis() as u64;
+
+            // Log prediction asynchronously (fire-and-forget)
+            let result_ids: Vec<String> = recommendations.iter().map(|r| r.id.clone()).collect();
+            let scores: Vec<f32> = recommendations.iter().map(|r| r.score).collect();
+            let logger = app_state.prediction_logger.clone();
+            let query = req.query.clone();
+            let ds_id = dataset_id.clone();
+            tokio::spawn(async move {
+                if let Err(e) = logger.log_prediction(
+                    &query,
+                    ds_id.as_deref(),
+                    result_ids,
+                    scores,
+                    latency_ms,
+                ).await {
+                    log::warn!("Failed to log prediction: {}", e);
+                }
+            });
                 
-            HttpResponse::Ok().json(json!({ "recommendations": recommendations }))
+            HttpResponse::Ok().json(json!({
+                "recommendations": recommendations,
+                "latency_ms": latency_ms
+            }))
         }
         Err(e) => HttpResponse::InternalServerError().json(json!({
             "error": format!("Failed to get recommendations: {}", e)

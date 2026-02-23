@@ -9,7 +9,8 @@ services:
       - RUST_LOG=info
       - QDRANT_URL=http://qdrant:6333
       - EMBEDDER_API_KEY=${EMBEDDER_API_KEY}
-      - DELTA_TABLE_PATH=/data/delta/tables
+      - DATASET_STORAGE_PATH=/data/datasets
+      - PREDICTION_LOG_PATH=/data/predictions
     volumes:
       - recommendation-data:/data
     depends_on:

@@ -1,15 +1,17 @@
 use anyhow::Result;
 use qdrant_client;
-use qdrant_client::qdrant::{Query, QueryPointsBuilder};
+use qdrant_client::qdrant::{Query, QueryPointsBuilder, DeletePointsBuilder};
 use qdrant_client::qdrant::{
     PointStruct, SearchPoints, UpsertPointsBuilder, Distance,
     WithPayloadSelector, with_payload_selector::SelectorOptions,
     CreateCollectionBuilder, VectorParamsBuilder, VectorInput,
-    point_id::PointIdOptions
+    point_id::PointIdOptions,
 };
 use qdrant_client::Qdrant;
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 use std::string::{String, ToString};
+use uuid::Uuid;
 
 
 pub struct QdrantClient {
@@ -20,7 +22,7 @@ pub struct QdrantClient {
 impl QdrantClient {
     pub async fn new() -> Self {
         let host = std::env::var("QDRANT_HOST").unwrap_or_else(|_| "127.0.0.1".to_string());
-        let port = std::env::var("QDRANT_GRPC_PORT").unwrap_or_else(|_| "6337".to_string());
+        let port = std::env::var("QDRANT_PORT").unwrap_or_else(|_| "6336".to_string());
         let api_key = std::env::var("QDRANT_API_KEY").ok();
         let use_https = std::env::var("QDRANT_HTTPS")
             .map(|v| v.to_lowercase() == "true")
@@ -57,6 +59,92 @@ impl QdrantClient {
         self.client.upsert_points(
             UpsertPointsBuilder::new(self.collection_name.clone(), points).wait(true),
         ).await?;
+        Ok(())
+    }
+    
+    /// Upsert vectors with dataset_id and text content as payload
+    pub async fn upsert_dataset_vectors(
+        &self,
+        dataset_id: &str,
+        texts: Vec<String>,
+        vectors: Vec<Vec<f32>>,
+    ) -> Result<()> {
+        let points: Vec<PointStruct> = texts
+            .into_iter()
+            .zip(vectors.into_iter())
+            .map(|(text, vector)| {
+                let point_id = Uuid::new_v4().to_string();
+                let mut payload = HashMap::new();
+                payload.insert("dataset_id".to_string(), JsonValue::String(dataset_id.to_string()));
+                payload.insert("text".to_string(), JsonValue::String(text));
+                
+                PointStruct::new(point_id, vector, payload)
+            })
+            .collect();
+        
+        if points.is_empty() {
+            return Ok(());
+        }
+        
+        self.client.upsert_points(
+            UpsertPointsBuilder::new(self.collection_name.clone(), points).wait(true),
+        ).await?;
+        
+        Ok(())
+    }
+    
+    /// Delete all points belonging to a dataset
+    pub async fn delete_by_dataset_id(&self, dataset_id: &str) -> Result<()> {
+        let filter = qdrant_client::qdrant::Filter {
+            must: vec![
+                qdrant_client::qdrant::Condition {
+                    condition_one_of: Some(
+                        qdrant_client::qdrant::condition::ConditionOneOf::Field(
+                            qdrant_client::qdrant::FieldCondition {
+                                key: "dataset_id".to_string(),
+                                r#match: Some(
+                                    qdrant_client::qdrant::Match {
+                                        match_value: Some(
+                                            qdrant_client::qdrant::r#match::MatchValue::Keyword(
+                                                dataset_id.to_string()
+                                            )
+                                        )
+                                    }
+                                ),
+                                ..Default::default()
+                            }
+                        )
+                    )
+                }
+            ],
+            ..Default::default()
+        };
+        
+        self.client.delete_points(
+            DeletePointsBuilder::new(self.collection_name.clone())
+                .points(filter)
+                .wait(true),
+        ).await?;
+        
+        Ok(())
+    }
+    
+    /// Check if collection exists, create if not
+    pub async fn ensure_collection(&self, vector_size: u64) -> Result<()> {
+        match self.client.collection_exists(&self.collection_name).await {
+            Ok(exists) => {
+                if !exists {
+                    self.create_collection(vector_size).await?;
+                    log::info!("Created collection: {}", self.collection_name);
+                }
+            }
+            Err(_) => {
+                // Try to create if check fails
+                if let Err(e) = self.create_collection(vector_size).await {
+                    log::warn!("Collection may already exist: {}", e);
+                }
+            }
+        }
         Ok(())
     }
     

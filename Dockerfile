@@ -37,7 +37,8 @@ USER appuser
 EXPOSE 8080
 
 ENV RUST_LOG=info
-ENV DELTA_TABLE_PATH=/data/delta/tables
+ENV DATASET_STORAGE_PATH=/data/datasets
+ENV PREDICTION_LOG_PATH=/data/predictions
 ENV QDRANT_URL=http://qdrant:6333
 ENV EMBEDDER_MODEL=voyage-3-large
 

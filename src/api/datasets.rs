@@ -1,5 +1,5 @@
 use actix_multipart::Multipart;
-use actix_web::{post, web, HttpResponse, get};
+use actix_web::{post, web, HttpResponse, get, delete};
 use futures_util::{stream::StreamExt, TryStreamExt};
 use serde::Serialize;
 use serde_json::json;
@@ -81,21 +81,52 @@ pub async fn upload_dataset(
         }
 
         
-        // Process the uploaded file
-        match app_state.delta_handler.process_file(&filepath).await {
-            Ok(dataset_id) => {
-                return HttpResponse::Ok().json(json!({
-                    "status": "success",
-                    "message": "File uploaded and processed successfully",
-                    "dataset_id": dataset_id
-                }));
-            }
+        // Process the uploaded file (None = new dataset, None = auto-detect text column)
+        let processed = match app_state.dataset_handler.process_file(&filepath, None, None).await {
+            Ok(data) => data,
             Err(e) => {
                 return HttpResponse::InternalServerError().json(json!({
                     "error": format!("Failed to process file: {}", e)
                 }));
             }
+        };
+        
+        // Embed the texts and store in Qdrant
+        if !processed.texts.is_empty() {
+            // Ensure collection exists (384 is typical embedding dimension)
+            if let Err(e) = app_state.qdrant_client.ensure_collection(384).await {
+                log::warn!("Collection setup warning: {}", e);
+            }
+            
+            // Generate embeddings for all texts
+            match app_state.embedder.batch_embed(processed.texts.clone()).await {
+                Ok(vectors) => {
+                    // Store in Qdrant
+                    if let Err(e) = app_state.qdrant_client
+                        .upsert_dataset_vectors(&processed.dataset_id, processed.texts.clone(), vectors)
+                        .await
+                    {
+                        log::error!("Failed to store vectors in Qdrant: {}", e);
+                        return HttpResponse::InternalServerError().json(json!({
+                            "error": format!("Failed to store vectors: {}", e)
+                        }));
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to generate embeddings: {}", e);
+                    return HttpResponse::InternalServerError().json(json!({
+                        "error": format!("Failed to generate embeddings: {}", e)
+                    }));
+                }
+            }
         }
+        
+        return HttpResponse::Ok().json(json!({
+            "status": "success",
+            "message": "File uploaded, processed, and vectors stored",
+            "dataset_id": processed.dataset_id,
+            "vectors_count": processed.texts.len()
+        }));
     }
     
     HttpResponse::BadRequest().json(json!({
@@ -115,7 +146,7 @@ pub async fn upload_dataset(
 )]
 #[get("/datasets")]
 pub async fn list_datasets(app_state: web::Data<AppState>) -> HttpResponse {
-    match app_state.delta_handler.list_datasets().await {
+    match app_state.dataset_handler.list_datasets().await {
         Ok(datasets) => HttpResponse::Ok().json(json!({ "datasets": datasets })),
         Err(e) => HttpResponse::InternalServerError().json(json!({
             "error": format!("Failed to list datasets: {}", e)
@@ -143,12 +174,59 @@ pub async fn get_dataset_info(
 ) -> HttpResponse {
     let dataset_id = path.into_inner();
     
-    match app_state.delta_handler.get_dataset_info(&dataset_id).await {
+    match app_state.dataset_handler.get_dataset_info(&dataset_id).await {
         Ok(info) => HttpResponse::Ok().json(json!({ "dataset": info })),
         Err(e) => HttpResponse::InternalServerError().json(json!({
             "error": format!("Failed to get dataset info: {}", e)
         })),
     }
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct DeleteResponse {
+    /// Operation status
+    pub status: String,
+    /// Message describing the result
+    pub message: String,
+}
+
+/// Delete a dataset and its vectors
+#[utoipa::path(
+    delete,
+    path = "/api/v1/datasets/{dataset_id}",
+    tag = "Datasets",
+    params(
+        ("dataset_id" = String, Path, description = "Dataset unique identifier to delete")
+    ),
+    responses(
+        (status = 200, description = "Dataset deleted successfully", body = DeleteResponse),
+        (status = 500, description = "Internal server error")
+    )
+)]
+#[delete("/datasets/{dataset_id}")]
+pub async fn delete_dataset(
+    path: web::Path<String>,
+    app_state: web::Data<AppState>,
+) -> HttpResponse {
+    let dataset_id = path.into_inner();
+    
+    // Delete from Qdrant
+    if let Err(e) = app_state.qdrant_client.delete_by_dataset_id(&dataset_id).await {
+        log::error!("Failed to delete vectors from Qdrant: {}", e);
+        return HttpResponse::InternalServerError().json(json!({
+            "error": format!("Failed to delete vectors: {}", e)
+        }));
+    }
+    
+    // Delete dataset files
+    if let Err(e) = app_state.dataset_handler.delete_dataset(&dataset_id).await {
+        log::warn!("Dataset file deletion warning: {}", e);
+    }
+    
+    HttpResponse::Ok().json(json!({
+        "status": "success",
+        "message": format!("Dataset {} deleted successfully", dataset_id)
+    }))
 }
 
 fn is_valid_file_type(filename: &str) -> bool {
