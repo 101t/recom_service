@@ -1,4 +1,4 @@
-.PHONY: run dev test check build release fmt clippy clean docker-up docker-down docker-build infra
+.PHONY: run dev test e2e check build release fmt clippy clean docker-up docker-down docker-build infra
 
 # ── Development ───────────────────────────────────────────────
 
@@ -13,6 +13,10 @@ dev:
 ## Run all tests
 test:
 	cargo test
+
+## Run end-to-end tests (requires running service + Qdrant)
+e2e:
+	./e2e/run_tests.sh
 
 ## Type-check without building
 check:
@@ -64,7 +68,8 @@ help:
 	@echo "Available targets:"
 	@echo "  run          Run the service (debug)"
 	@echo "  dev          Run with auto-reload (cargo-watch)"
-	@echo "  test         Run all tests"
+	@echo "  test         Run all unit tests"
+	@echo "  e2e          Run end-to-end tests"
 	@echo "  check        Type-check without building"
 	@echo "  fmt          Format code"
 	@echo "  clippy       Lint with clippy"

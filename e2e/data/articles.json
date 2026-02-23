@@ -1,0 +1,82 @@
+[
+  {
+    "id": 101,
+    "title": "Introduction to Machine Learning",
+    "text": "A comprehensive guide covering supervised and unsupervised learning algorithms including regression, classification, and clustering techniques",
+    "topic": "machine-learning",
+    "difficulty": 2,
+    "published": true
+  },
+  {
+    "id": 102,
+    "title": "Deep Learning with Neural Networks",
+    "text": "Explore convolutional neural networks, recurrent networks, transformers, and attention mechanisms for computer vision and NLP",
+    "topic": "deep-learning",
+    "difficulty": 3,
+    "published": true
+  },
+  {
+    "id": 103,
+    "title": "Natural Language Processing Fundamentals",
+    "text": "Text preprocessing, tokenization, word embeddings, sentiment analysis, and named entity recognition with practical examples",
+    "topic": "nlp",
+    "difficulty": 2,
+    "published": true
+  },
+  {
+    "id": 104,
+    "title": "Reinforcement Learning in Practice",
+    "text": "Q-learning, policy gradients, actor-critic methods, and multi-agent reinforcement learning for game playing and robotics",
+    "topic": "reinforcement-learning",
+    "difficulty": 4,
+    "published": false
+  },
+  {
+    "id": 105,
+    "title": "Data Engineering Pipelines",
+    "text": "Building scalable ETL pipelines with Apache Spark, Kafka, and Airflow for real-time and batch data processing",
+    "topic": "data-engineering",
+    "difficulty": 3,
+    "published": true
+  },
+  {
+    "id": 106,
+    "title": "Computer Vision Applications",
+    "text": "Object detection, image segmentation, face recognition, and optical character recognition using modern deep learning frameworks",
+    "topic": "computer-vision",
+    "difficulty": 3,
+    "published": true
+  },
+  {
+    "id": 107,
+    "title": "Statistical Analysis and Hypothesis Testing",
+    "text": "Probability distributions, Bayesian inference, A/B testing, Chi-squared tests, and ANOVA for data-driven decision making",
+    "topic": "statistics",
+    "difficulty": 1,
+    "published": true
+  },
+  {
+    "id": 108,
+    "title": "Time Series Forecasting",
+    "text": "ARIMA, Prophet, LSTM-based forecasting, seasonality detection, and anomaly detection in temporal data",
+    "topic": "machine-learning",
+    "difficulty": 3,
+    "published": true
+  },
+  {
+    "id": 109,
+    "title": "Recommendation Systems Design",
+    "text": "Collaborative filtering, content-based filtering, hybrid approaches, and matrix factorization for personalized recommendations",
+    "topic": "machine-learning",
+    "difficulty": 2,
+    "published": true
+  },
+  {
+    "id": 110,
+    "title": "MLOps and Model Deployment",
+    "text": "Model versioning, CI/CD for ML, feature stores, monitoring, and serving predictions at scale with Kubernetes and Docker",
+    "topic": "mlops",
+    "difficulty": 3,
+    "published": true
+  }
+]

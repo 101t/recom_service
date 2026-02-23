@@ -1,0 +1,21 @@
+id,name,description,category,price,in_stock
+1,Running Shoes Pro,Lightweight running shoes with responsive cushioning for daily training,footwear,129.99,true
+2,Trail Blazer Boots,Waterproof hiking boots with aggressive tread for rough terrain,footwear,189.99,true
+3,Classic Leather Jacket,Premium full-grain leather motorcycle jacket with quilted lining,outerwear,349.99,true
+4,Wireless Noise-Canceling Headphones,Over-ear headphones with 30h battery and ANC technology,electronics,279.99,true
+5,Yoga Mat Premium,Extra thick non-slip yoga mat with alignment markers,fitness,49.99,true
+6,Stainless Steel Water Bottle,Double-wall insulated bottle keeps drinks cold 24h or hot 12h,accessories,34.99,true
+7,Mechanical Keyboard RGB,Cherry MX switches with per-key RGB backlighting and aluminum frame,electronics,159.99,false
+8,Ultralight Down Jacket,800-fill down packable jacket weighing only 280g,outerwear,199.99,true
+9,Smart Fitness Watch,GPS running watch with heart rate monitor and 7-day battery,electronics,249.99,true
+10,Climbing Harness Sport,Lightweight sport climbing harness with adjustable leg loops,fitness,89.99,true
+11,Merino Wool Base Layer,Temperature-regulating merino wool long sleeve top,outerwear,79.99,true
+12,Portable Bluetooth Speaker,Waterproof speaker with 360-degree sound and 15h playtime,electronics,99.99,true
+13,Carbon Fiber Trekking Poles,Ultralight collapsible trekking poles with cork grips,fitness,129.99,false
+14,Canvas Backpack 30L,Heritage waxed canvas daypack with padded laptop compartment,accessories,119.99,true
+15,Sunscreen SPF 50,Reef-safe mineral sunscreen for face and body,accessories,24.99,true
+16,Winter Running Tights,Thermal running tights with reflective details for cold weather,footwear,69.99,true
+17,Organic Cotton T-Shirt,Sustainably made organic cotton crew neck t-shirt,outerwear,29.99,true
+18,Electric Scooter Lite,Foldable electric scooter with 25km range and LED display,electronics,499.99,true
+19,Resistance Bands Set,Set of 5 latex-free resistance bands with door anchor,fitness,29.99,true
+20,Insulated Food Container,Vacuum insulated stainless steel food jar keeps meals hot 6h,accessories,39.99,true
