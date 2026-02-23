@@ -1,11 +1,11 @@
 use actix_multipart::Multipart;
 use actix_web::{post, web, HttpResponse, get, delete};
 use futures_util::{stream::StreamExt, TryStreamExt};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
-use utoipa::ToSchema;
+use utoipa::{IntoParams, ToSchema};
 use uuid::Uuid;
 
 use crate::AppState;
@@ -18,6 +18,9 @@ pub struct UploadResponse {
     pub message: String,
     /// Generated dataset ID
     pub dataset_id: String,
+    /// Job ID for tracking background processing (if async)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -32,13 +35,30 @@ pub struct DatasetInfoResponse {
     pub dataset: serde_json::Value,
 }
 
+/// Upload query parameters
+#[derive(Debug, Deserialize, IntoParams)]
+pub struct UploadParams {
+    /// Process in background for large files (default: false)
+    pub background: Option<bool>,
+    /// Existing dataset ID to append to
+    pub dataset_id: Option<String>,
+    /// Name of the text column to embed
+    pub text_column: Option<String>,
+}
+
 /// Upload a dataset file (CSV, JSON, or Parquet)
+///
+/// For large datasets, set `?background=true` to process in the background.
+/// The response will include a `job_id` you can use to check progress via
+/// `GET /api/v1/datasets/jobs/{job_id}`.
 #[utoipa::path(
     post,
     path = "/api/v1/datasets/upload",
     tag = "Datasets",
+    params(UploadParams),
     responses(
-        (status = 200, description = "File uploaded successfully", body = UploadResponse),
+        (status = 200, description = "File uploaded and processed synchronously", body = UploadResponse),
+        (status = 202, description = "File accepted for background processing", body = UploadResponse),
         (status = 400, description = "Invalid file type"),
         (status = 500, description = "Internal server error")
     )
@@ -46,33 +66,49 @@ pub struct DatasetInfoResponse {
 #[post("/datasets/upload")]
 pub async fn upload_dataset(
     mut payload: Multipart,
+    query: web::Query<UploadParams>,
     app_state: web::Data<AppState>,
 ) -> HttpResponse {
+    let background = query.background.unwrap_or(false);
+    let existing_dataset_id = query.dataset_id.clone();
+    let text_column = query.text_column.clone();
+
     // Iterate over multipart stream
     while let Ok(Some(mut field)) = payload.try_next().await {
         let filename = field
             .content_disposition()
             .and_then(|cd| cd.get_filename())
-            .unwrap_or("unknown");
+            .unwrap_or("unknown")
+            .to_string();
 
-        if !is_valid_file_type(filename) {
+        if !is_valid_file_type(&filename) {
             return HttpResponse::BadRequest().json(
                 json!({"error": "Invalid file type. Supported types: CSV, JSON, Parquet"}),
             );
         }
         
-        // Create file path
+        // Save uploaded file to disk
         let file_id = Uuid::new_v4();
         let filepath = format!("/tmp/{}_{}", file_id, filename);
         
-        let mut f = File::create(&filepath).await.map_err(|e| {
-            HttpResponse::InternalServerError().json(json!({
-                "error": format!("Failed to create file: {}", e)
-            }))
-        }).unwrap();
+        let mut f = match File::create(&filepath).await {
+            Ok(f) => f,
+            Err(e) => {
+                return HttpResponse::InternalServerError().json(json!({
+                    "error": format!("Failed to create file: {}", e)
+                }));
+            }
+        };
 
         while let Some(chunk) = field.next().await {
-            let data = chunk.unwrap();
+            let data = match chunk {
+                Ok(d) => d,
+                Err(e) => {
+                    return HttpResponse::InternalServerError().json(json!({
+                        "error": format!("Failed to read upload chunk: {}", e)
+                    }));
+                }
+            };
             if let Err(e) = f.write_all(&data).await {
                 return HttpResponse::InternalServerError().json(json!({
                     "error": format!("Failed to write to file: {}", e)
@@ -80,9 +116,51 @@ pub async fn upload_dataset(
             }
         }
 
-        
-        // Process the uploaded file (None = new dataset, None = auto-detect text column)
-        let processed = match app_state.dataset_handler.process_file(&filepath, None, None).await {
+        // ─── Background processing ─────────────────────────────────
+        if background {
+            let dataset_id = existing_dataset_id
+                .clone()
+                .unwrap_or_else(|| Uuid::new_v4().to_string());
+            let job_id = Uuid::new_v4().to_string();
+
+            // Register the job
+            {
+                let mut jobs = app_state.jobs.lock().await;
+                jobs.insert(
+                    job_id.clone(),
+                    crate::JobStatus {
+                        job_id: job_id.clone(),
+                        dataset_id: dataset_id.clone(),
+                        status: "processing".to_string(),
+                        message: "Dataset upload started — processing in background".to_string(),
+                        vectors_count: None,
+                    },
+                );
+            }
+
+            let state = app_state.clone();
+            let jid = job_id.clone();
+            let dsid = dataset_id.clone();
+            let tc = text_column.clone();
+            let fp = filepath.clone();
+            tokio::spawn(async move {
+                process_and_embed(&state, &fp, Some(dsid.clone()), tc, &jid).await;
+            });
+
+            return HttpResponse::Accepted().json(json!({
+                "status": "accepted",
+                "message": "File accepted for background processing",
+                "dataset_id": dataset_id,
+                "job_id": job_id
+            }));
+        }
+
+        // ─── Synchronous processing ───────────────────────────────
+        let processed = match app_state
+            .dataset_handler
+            .process_file(&filepath, existing_dataset_id.clone(), text_column.clone())
+            .await
+        {
             Ok(data) => data,
             Err(e) => {
                 return HttpResponse::InternalServerError().json(json!({
@@ -91,19 +169,21 @@ pub async fn upload_dataset(
             }
         };
         
-        // Embed the texts and store in Qdrant
+        // Embed and store
         if !processed.texts.is_empty() {
-            // Ensure collection exists (384 is typical embedding dimension)
             if let Err(e) = app_state.qdrant_client.ensure_collection(384).await {
                 log::warn!("Collection setup warning: {}", e);
             }
             
-            // Generate embeddings for all texts
             match app_state.embedder.batch_embed(processed.texts.clone()).await {
                 Ok(vectors) => {
-                    // Store in Qdrant
-                    if let Err(e) = app_state.qdrant_client
-                        .upsert_dataset_vectors(&processed.dataset_id, processed.texts.clone(), vectors)
+                    if let Err(e) = app_state
+                        .qdrant_client
+                        .upsert_dataset_vectors(
+                            &processed.dataset_id,
+                            processed.texts.clone(),
+                            vectors,
+                        )
                         .await
                     {
                         log::error!("Failed to store vectors in Qdrant: {}", e);
@@ -121,6 +201,9 @@ pub async fn upload_dataset(
             }
         }
         
+        // Cleanup temp file (best-effort)
+        let _ = tokio::fs::remove_file(&filepath).await;
+
         return HttpResponse::Ok().json(json!({
             "status": "success",
             "message": "File uploaded, processed, and vectors stored",
@@ -132,6 +215,121 @@ pub async fn upload_dataset(
     HttpResponse::BadRequest().json(json!({
         "error": "No valid file found in request"
     }))
+}
+
+/// Background processing helper
+async fn process_and_embed(
+    state: &web::Data<AppState>,
+    filepath: &str,
+    dataset_id: Option<String>,
+    text_column: Option<String>,
+    job_id: &str,
+) {
+    let result = state
+        .dataset_handler
+        .process_file(filepath, dataset_id, text_column)
+        .await;
+
+    match result {
+        Ok(processed) => {
+            if processed.texts.is_empty() {
+                let mut jobs = state.jobs.lock().await;
+                if let Some(job) = jobs.get_mut(job_id) {
+                    job.status = "completed".to_string();
+                    job.message = "No texts found to embed".to_string();
+                    job.vectors_count = Some(0);
+                }
+                return;
+            }
+
+            if let Err(e) = state.qdrant_client.ensure_collection(384).await {
+                log::warn!("Collection setup warning: {}", e);
+            }
+
+            match state.embedder.batch_embed(processed.texts.clone()).await {
+                Ok(vectors) => {
+                    let count = vectors.len();
+                    match state
+                        .qdrant_client
+                        .upsert_dataset_vectors(
+                            &processed.dataset_id,
+                            processed.texts.clone(),
+                            vectors,
+                        )
+                        .await
+                    {
+                        Ok(_) => {
+                            let mut jobs = state.jobs.lock().await;
+                            if let Some(job) = jobs.get_mut(job_id) {
+                                job.status = "completed".to_string();
+                                job.message = format!(
+                                    "Processed {} rows, stored {} vectors",
+                                    processed.row_count, count
+                                );
+                                job.vectors_count = Some(count);
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Background upsert failed: {}", e);
+                            let mut jobs = state.jobs.lock().await;
+                            if let Some(job) = jobs.get_mut(job_id) {
+                                job.status = "failed".to_string();
+                                job.message = format!("Failed to store vectors: {}", e);
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("Background embedding failed: {}", e);
+                    let mut jobs = state.jobs.lock().await;
+                    if let Some(job) = jobs.get_mut(job_id) {
+                        job.status = "failed".to_string();
+                        job.message = format!("Failed to generate embeddings: {}", e);
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("Background file processing failed: {}", e);
+            let mut jobs = state.jobs.lock().await;
+            if let Some(job) = jobs.get_mut(job_id) {
+                job.status = "failed".to_string();
+                job.message = format!("Failed to process file: {}", e);
+            }
+        }
+    }
+
+    // Cleanup temp file (best-effort)
+    let _ = tokio::fs::remove_file(filepath).await;
+}
+
+/// Check the status of a background upload job
+#[utoipa::path(
+    get,
+    path = "/api/v1/datasets/jobs/{job_id}",
+    tag = "Datasets",
+    params(
+        ("job_id" = String, Path, description = "Background job ID")
+    ),
+    responses(
+        (status = 200, description = "Job status", body = crate::JobStatus),
+        (status = 404, description = "Job not found")
+    )
+)]
+#[get("/datasets/jobs/{job_id}")]
+pub async fn get_job_status(
+    path: web::Path<String>,
+    app_state: web::Data<AppState>,
+) -> HttpResponse {
+    let job_id = path.into_inner();
+    let jobs = app_state.jobs.lock().await;
+    
+    match jobs.get(&job_id) {
+        Some(status) => HttpResponse::Ok().json(status),
+        None => HttpResponse::NotFound().json(json!({
+            "error": format!("Job {} not found", job_id)
+        })),
+    }
 }
 
 /// List all available datasets
@@ -274,11 +472,26 @@ mod tests {
             status: "success".to_string(),
             message: "File uploaded".to_string(),
             dataset_id: "test-uuid-123".to_string(),
+            job_id: None,
         };
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("success"));
         assert!(json.contains("File uploaded"));
         assert!(json.contains("test-uuid-123"));
+        assert!(!json.contains("job_id"));
+    }
+
+    #[test]
+    fn test_upload_response_with_job_id() {
+        let response = UploadResponse {
+            status: "accepted".to_string(),
+            message: "Processing in background".to_string(),
+            dataset_id: "ds-1".to_string(),
+            job_id: Some("job-abc".to_string()),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("accepted"));
+        assert!(json.contains("job-abc"));
     }
 
     #[test]
@@ -305,5 +518,14 @@ mod tests {
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("test-dataset"));
         assert!(json.contains("100"));
+    }
+
+    #[test]
+    fn test_upload_params_defaults() {
+        let json = "{}";
+        let params: UploadParams = serde_json::from_str(json).unwrap();
+        assert!(params.background.is_none());
+        assert!(params.dataset_id.is_none());
+        assert!(params.text_column.is_none());
     }
 }

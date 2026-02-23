@@ -11,24 +11,47 @@ use embedding::local_embedder::LocalEmbedder;
 use embedding::voyage_embedder::VoyageEmbedder;
 use embedding::Embedder;
 use qdrant::client::QdrantClient;
+use serde::Serialize;
+use std::collections::HashMap;
 use std::sync::Arc;
-use utoipa::OpenApi;
+use tokio::sync::Mutex;
+use utoipa::{OpenApi, ToSchema};
 use utoipa_swagger_ui::SwaggerUi;
 
 use api::{
     health::{self, HealthResponse},
     recommendations::{self, RecommendationRequest, Recommendation, RecommendationResponse, ErrorResponse},
     datasets::{self, UploadResponse, DatasetListResponse, DatasetInfoResponse, DeleteResponse},
+    collections,
     predictions,
 };
 use data::prediction_logger::{PredictionLog, PredictionLogListResponse};
+use qdrant::client::{
+    CollectionDetails, CreateCollectionRequest, QdrantFilter, FilterCondition,
+    MatchCondition, RangeCondition,
+};
+
+/// Status of a background dataset upload job
+#[derive(Debug, Clone, Serialize, ToSchema)]
+pub struct JobStatus {
+    /// Unique job identifier
+    pub job_id: String,
+    /// Dataset identifier
+    pub dataset_id: String,
+    /// Current status: pending | processing | completed | failed
+    pub status: String,
+    /// Human-readable message
+    pub message: String,
+    /// Number of vectors upserted (populated on completion)
+    pub vectors_count: Option<usize>,
+}
 
 #[derive(OpenApi)]
 #[openapi(
     info(
         title = "Recommendation Service API",
         description = "Vector-based recommendation service with Parquet dataset storage and Qdrant vector database",
-        version = "0.1.0",
+        version = "0.2.0",
         contact(name = "API Support"),
         license(name = "MIT")
     ),
@@ -39,8 +62,13 @@ use data::prediction_logger::{PredictionLog, PredictionLogListResponse};
         datasets::list_datasets,
         datasets::get_dataset_info,
         datasets::delete_dataset,
+        datasets::get_job_status,
         predictions::list_prediction_logs,
         predictions::export_prediction_logs,
+        collections::list_collections,
+        collections::create_collection,
+        collections::get_collection,
+        collections::delete_collection,
     ),
     components(schemas(
         HealthResponse,
@@ -54,12 +82,20 @@ use data::prediction_logger::{PredictionLog, PredictionLogListResponse};
         DeleteResponse,
         PredictionLog,
         PredictionLogListResponse,
+        JobStatus,
+        CollectionDetails,
+        CreateCollectionRequest,
+        QdrantFilter,
+        FilterCondition,
+        MatchCondition,
+        RangeCondition,
     )),
     tags(
         (name = "Health", description = "Health check endpoints"),
         (name = "Recommendations", description = "Recommendation endpoints"),
         (name = "Datasets", description = "Dataset management endpoints"),
-        (name = "Predictions", description = "Prediction log endpoints")
+        (name = "Predictions", description = "Prediction log endpoints"),
+        (name = "Collections", description = "Qdrant collection management")
     )
 )]
 struct ApiDoc;
@@ -70,6 +106,7 @@ pub struct AppState {
     pub embedder: Arc<dyn Embedder>,
     pub dataset_handler: Arc<DatasetHandler>,
     pub prediction_logger: Arc<PredictionLogger>,
+    pub jobs: Arc<Mutex<HashMap<String, JobStatus>>>,
 }
 
 #[actix_web::main]
@@ -104,6 +141,7 @@ async fn main() -> std::io::Result<()> {
         embedder,
         dataset_handler,
         prediction_logger,
+        jobs: Arc::new(Mutex::new(HashMap::new())),
     };
 
     let openapi = ApiDoc::openapi();

@@ -4,6 +4,7 @@ use serde_json::json;
 use utoipa::ToSchema;
 
 use crate::AppState;
+use crate::qdrant::client::QdrantFilter;
 
 #[derive(Debug, Deserialize, ToSchema)]
 pub struct RecommendationRequest {
@@ -13,8 +14,12 @@ pub struct RecommendationRequest {
     pub dataset_id: Option<String>,
     /// Maximum number of results (default: 10)
     pub limit: Option<u32>,
-    /// Optional filters for the search
+    /// Optional simple key-value filters (legacy, backward-compatible)
     pub filters: Option<serde_json::Value>,
+    /// Full Qdrant-style filter with must / must_not / should / min_should_count
+    pub filter: Option<QdrantFilter>,
+    /// Minimum score threshold — only return results above this score
+    pub score_threshold: Option<f32>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -31,6 +36,8 @@ pub struct Recommendation {
 pub struct RecommendationResponse {
     /// List of recommendations
     pub recommendations: Vec<Recommendation>,
+    /// Query latency in milliseconds
+    pub latency_ms: u64,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -40,6 +47,14 @@ pub struct ErrorResponse {
 }
 
 /// Get recommendations based on a query
+///
+/// Supports full Qdrant-style filtering:
+/// - **must**: all conditions must match (AND)
+/// - **must_not**: none of these conditions may match (NOT)
+/// - **should**: at least one condition should match (OR)
+/// - **min_should_count**: minimum number of should-conditions that must match
+///
+/// Each condition can be a **match** (exact keyword/integer/boolean) or a **range** (gt/gte/lt/lte).
 #[utoipa::path(
     post,
     path = "/api/v1/recommend",
@@ -67,12 +82,42 @@ pub async fn get_recommendations(
         }
     };
     
-    // Get recommendations from Qdrant
     let limit = req.limit.unwrap_or(10);
-    let filters = req.filters.clone();
     let dataset_id = req.dataset_id.clone();
-    
-    match app_state.qdrant_client.search(embedding, limit, filters, dataset_id.clone()).await {
+    let score_threshold = req.score_threshold;
+
+    // Determine which filter to use: new-style `filter` takes precedence
+    let qdrant_filter = if req.filter.is_some() {
+        req.filter.clone()
+    } else if let Some(ref legacy) = req.filters {
+        // Convert legacy flat filter → QdrantFilter with must conditions
+        if let serde_json::Value::Object(map) = legacy {
+            let must: Vec<crate::qdrant::client::FilterCondition> = map
+                .iter()
+                .map(|(k, v)| crate::qdrant::client::FilterCondition {
+                    key: k.clone(),
+                    r#match: Some(crate::qdrant::client::MatchCondition { value: v.clone() }),
+                    range: None,
+                })
+                .collect();
+            Some(QdrantFilter {
+                must: Some(must),
+                must_not: None,
+                should: None,
+                min_should_count: None,
+            })
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    match app_state
+        .qdrant_client
+        .search_with_filter(embedding, limit, qdrant_filter, dataset_id.clone(), score_threshold)
+        .await
+    {
         Ok(results) => {
             let recommendations: Vec<Recommendation> = results
                 .into_iter()
@@ -92,13 +137,10 @@ pub async fn get_recommendations(
             let query = req.query.clone();
             let ds_id = dataset_id.clone();
             tokio::spawn(async move {
-                if let Err(e) = logger.log_prediction(
-                    &query,
-                    ds_id.as_deref(),
-                    result_ids,
-                    scores,
-                    latency_ms,
-                ).await {
+                if let Err(e) = logger
+                    .log_prediction(&query, ds_id.as_deref(), result_ids, scores, latency_ms)
+                    .await
+                {
                     log::warn!("Failed to log prediction: {}", e);
                 }
             });
@@ -183,6 +225,7 @@ mod tests {
                     payload: json!({"name": "Product B"}),
                 },
             ],
+            latency_ms: 42,
         };
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("Product A"));
