@@ -1,0 +1,10 @@
+[
+  {"id": "m1", "lang": "es", "title": "Zapatillas de running ligeras con amortiguación para entrenar a diario"},
+  {"id": "m2", "lang": "ar", "title": "سماعات رأس لاسلكية بخاصية إلغاء الضوضاء وبطارية تدوم ثلاثين ساعة"},
+  {"id": "m3", "lang": "fr", "title": "Veste en cuir classique pour moto avec doublure matelassée"},
+  {"id": "m4", "lang": "de", "title": "Wasserdichte Wanderstiefel mit grobem Profil für raues Gelände"},
+  {"id": "m5", "lang": "zh", "title": "加厚防滑瑜伽垫，带对齐标记"},
+  {"id": "m6", "lang": "ru", "title": "Умные фитнес-часы с GPS и пульсометром"},
+  {"id": "m7", "lang": "it", "title": "Borraccia termica in acciaio inox, mantiene le bevande fredde per 24 ore"},
+  {"id": "m8", "lang": "tr", "title": "360 derece ses veren su geçirmez taşınabilir Bluetooth hoparlör"}
+]

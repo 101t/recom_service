@@ -1,0 +1,14 @@
+[package]
+name = "recom-e2e"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Black-box end-to-end tests for the recommendation service"
+
+[dependencies]
+
+[dev-dependencies]
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "multipart"] }
+serde_json = "1.0"
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "time"] }
+uuid = { version = "1.18", features = ["v4"] }

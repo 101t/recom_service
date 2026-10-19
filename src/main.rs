@@ -1,172 +1,113 @@
-mod api;
-mod data;
-mod embedding;
-mod qdrant;
+//! `recommendation-service` binary.
+//!
+//! ```text
+//! recommendation-service [serve]        start the HTTP server (default)
+//! recommendation-service healthcheck    exit 0 if the local server answers /health (for Docker)
+//! recommendation-service download-model download the configured embedding model and exit
+//! recommendation-service version        print the version
+//! ```
 
-use actix_cors::Cors;
-use actix_web::{web, App, HttpServer};
-use data::dataset_handler::DatasetHandler;
-use data::prediction_logger::PredictionLogger;
-use embedding::local_embedder::LocalEmbedder;
-use embedding::voyage_embedder::VoyageEmbedder;
-use embedding::Embedder;
-use qdrant::client::QdrantClient;
-use serde::Serialize;
-use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::Mutex;
-use utoipa::{OpenApi, ToSchema};
-use utoipa_swagger_ui::SwaggerUi;
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::process::ExitCode;
+use std::time::Duration;
 
-use api::{
-    health::{self, HealthResponse},
-    recommendations::{self, RecommendationRequest, Recommendation, RecommendationResponse, ErrorResponse},
-    datasets::{self, UploadResponse, DatasetListResponse, DatasetInfoResponse, DeleteResponse},
-    collections,
-    predictions,
-};
-use data::prediction_logger::{PredictionLog, PredictionLogListResponse};
-use qdrant::client::{
-    CollectionDetails, CreateCollectionRequest, QdrantFilter, FilterCondition,
-    MatchCondition, RangeCondition,
-};
+use recom_service::config::Settings;
+use recom_service::{embedding, server, telemetry};
 
-/// Status of a background dataset upload job
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct JobStatus {
-    /// Unique job identifier
-    pub job_id: String,
-    /// Dataset identifier
-    pub dataset_id: String,
-    /// Current status: pending | processing | completed | failed
-    pub status: String,
-    /// Human-readable message
-    pub message: String,
-    /// Number of vectors upserted (populated on completion)
-    pub vectors_count: Option<usize>,
+const USAGE: &str = "usage: recommendation-service [serve|healthcheck|download-model|version|help]";
+
+fn main() -> ExitCode {
+    let command = std::env::args().nth(1).unwrap_or_else(|| "serve".into());
+    match command.as_str() {
+        "serve" => run_async(serve()),
+        "download-model" => run_async(download_model()),
+        "healthcheck" => healthcheck(),
+        "version" | "--version" | "-V" => {
+            println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+            ExitCode::SUCCESS
+        }
+        "help" | "--help" | "-h" => {
+            println!(
+                "{USAGE}\n\nConfiguration is read from environment variables (and .env); see .env.example."
+            );
+            ExitCode::SUCCESS
+        }
+        other => {
+            eprintln!("unknown command '{other}'\n{USAGE}");
+            ExitCode::from(2)
+        }
+    }
 }
 
-#[derive(OpenApi)]
-#[openapi(
-    info(
-        title = "Recommendation Service API",
-        description = "Vector-based recommendation service with Parquet dataset storage and Qdrant vector database",
-        version = "0.2.0",
-        contact(name = "API Support"),
-        license(name = "MIT")
-    ),
-    paths(
-        health::health_check,
-        recommendations::get_recommendations,
-        datasets::upload_dataset,
-        datasets::list_datasets,
-        datasets::get_dataset_info,
-        datasets::delete_dataset,
-        datasets::get_job_status,
-        predictions::list_prediction_logs,
-        predictions::export_prediction_logs,
-        collections::list_collections,
-        collections::create_collection,
-        collections::get_collection,
-        collections::delete_collection,
-    ),
-    components(schemas(
-        HealthResponse,
-        RecommendationRequest,
-        Recommendation,
-        RecommendationResponse,
-        ErrorResponse,
-        UploadResponse,
-        DatasetListResponse,
-        DatasetInfoResponse,
-        DeleteResponse,
-        PredictionLog,
-        PredictionLogListResponse,
-        JobStatus,
-        CollectionDetails,
-        CreateCollectionRequest,
-        QdrantFilter,
-        FilterCondition,
-        MatchCondition,
-        RangeCondition,
-    )),
-    tags(
-        (name = "Health", description = "Health check endpoints"),
-        (name = "Recommendations", description = "Recommendation endpoints"),
-        (name = "Datasets", description = "Dataset management endpoints"),
-        (name = "Predictions", description = "Prediction log endpoints"),
-        (name = "Collections", description = "Qdrant collection management")
-    )
-)]
-struct ApiDoc;
-
-#[derive(Clone)]
-pub struct AppState {
-    pub qdrant_client: Arc<QdrantClient>,
-    pub embedder: Arc<dyn Embedder>,
-    pub dataset_handler: Arc<DatasetHandler>,
-    pub prediction_logger: Arc<PredictionLogger>,
-    pub jobs: Arc<Mutex<HashMap<String, JobStatus>>>,
-}
-
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
-    // Load .env file before anything else
+fn load_settings() -> anyhow::Result<Settings> {
     dotenvy::dotenv().ok();
-    env_logger::init();
-    
-    // Initialize components
-    let qdrant_client = Arc::new(QdrantClient::new().await);
-    
-    // Select embedder based on environment variable
-    // USE_LOCAL_EMBEDDER=true uses the local FastEmbed service (default)
-    // USE_LOCAL_EMBEDDER=false uses Voyage AI (requires VOYAGE_API_KEY)
-    let use_local = std::env::var("USE_LOCAL_EMBEDDER")
-        .map(|v| v.to_lowercase() != "false")
-        .unwrap_or(true);
-    
-    let embedder: Arc<dyn Embedder> = if use_local {
-        log::info!("Using local FastEmbed service for embeddings");
-        Arc::new(LocalEmbedder::new())
-    } else {
-        log::info!("Using Voyage AI for embeddings");
-        Arc::new(VoyageEmbedder::new())
-    };
-    
-    let dataset_handler = Arc::new(DatasetHandler::new());
-    let prediction_logger = Arc::new(PredictionLogger::new());
-    
-    let app_state = AppState {
-        qdrant_client,
-        embedder,
-        dataset_handler,
-        prediction_logger,
-        jobs: Arc::new(Mutex::new(HashMap::new())),
-    };
+    let settings = Settings::from_env()?;
+    telemetry::init(settings.log_format);
+    Ok(settings)
+}
 
-    let openapi = ApiDoc::openapi();
-    
-    log::info!("Starting server at http://0.0.0.0:8000");
-    log::info!("Swagger UI available at http://0.0.0.0:8000/docs/");
-    
-    // Start HTTP server
-    HttpServer::new(move || {
-        let cors = Cors::default()
-            .allow_any_origin()
-            .allow_any_method()
-            .allow_any_header()
-            .max_age(3600);
-            
-        App::new()
-            .app_data(web::Data::new(app_state.clone()))
-            .wrap(cors)
-            .configure(api::config)
-            .service(
-                SwaggerUi::new("/docs/{_:.*}")
-                    .url("/api-docs/openapi.json", openapi.clone())
-            )
-    })
-    .bind("0.0.0.0:8000")?
-    .run()
-    .await
+fn run_async(future: impl Future<Output = anyhow::Result<()>>) -> ExitCode {
+    // HTTP workers get their own single-threaded runtimes from actix. The main
+    // runtime is multi-threaded because it drives the Qdrant connection,
+    // prediction logging and background training jobs.
+    let system = actix_web::rt::System::with_tokio_rt(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .thread_name("recom-main")
+            .build()
+            .expect("failed to build the Tokio runtime")
+    });
+    match system.block_on(future) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            tracing::error!(error = format!("{err:#}"), "fatal error");
+            eprintln!("error: {err:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn serve() -> anyhow::Result<()> {
+    server::run(load_settings()?).await
+}
+
+async fn download_model() -> anyhow::Result<()> {
+    let settings = load_settings()?;
+    let embedder = embedding::build(&settings.embedding).await?;
+    println!(
+        "{} ({} dimensions) is ready",
+        embedder.model(),
+        embedder.dimension()
+    );
+    Ok(())
+}
+
+/// Minimal HTTP probe so container images need no curl/wget.
+fn healthcheck() -> ExitCode {
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8000);
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let probe = || -> std::io::Result<bool> {
+        let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(3))?;
+        stream.set_read_timeout(Some(Duration::from_secs(3)))?;
+        stream
+            .write_all(b"GET /health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")?;
+        let mut buf = [0u8; 32];
+        let n = stream.read(&mut buf)?;
+        Ok(buf[..n].starts_with(b"HTTP/1.1 200"))
+    };
+    match probe() {
+        Ok(true) => ExitCode::SUCCESS,
+        Ok(false) => {
+            eprintln!("unhealthy: /health did not return 200");
+            ExitCode::FAILURE
+        }
+        Err(err) => {
+            eprintln!("unhealthy: {err}");
+            ExitCode::FAILURE
+        }
+    }
 }

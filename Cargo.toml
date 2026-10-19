@@ -1,32 +1,76 @@
+[workspace]
+members = [".", "e2e"]
+default-members = ["."]
+resolver = "3"
+
 [package]
 name = "recommendation-service"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
+rust-version = "1.88"
+description = "Scalable, multilingual vector recommendation service backed by Qdrant"
+license = "MIT"
+readme = "README.md"
+keywords = ["recommendation", "qdrant", "embeddings", "vector-search", "actix"]
+categories = ["web-programming::http-server", "science"]
+
+[lib]
+name = "recom_service"
+path = "src/lib.rs"
+
+[[bin]]
+name = "recommendation-service"
+path = "src/main.rs"
+
+[features]
+default = ["fastembed"]
+# In-process ONNX embeddings (multilingual models via fastembed-rs).
+# Disable with `--no-default-features` to build a lighter binary that only
+# uses remote embedding providers (OpenAI-compatible / Voyage).
+fastembed = ["dep:fastembed"]
 
 [dependencies]
-actix-web = "4.4"
-actix-multipart = "0.7.2"
+# HTTP
+actix-web = "4.17"
+actix-multipart = "0.7"
 actix-cors = "0.7"
-tokio = { version = "1.0", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync"] }
+actix-web-prom = "0.10"
+tracing-actix-web = "0.7"
+utoipa = { version = "6", features = ["actix_extras", "chrono"] }
+utoipa-actix-web = { version = "0.2", default-features = false }
+# `vendored` bundles the Swagger UI assets, so builds need no network or curl.
+utoipa-swagger-ui = { version = "10", features = ["actix-web", "vendored"] }
+
+# Async runtime
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "fs", "io-util", "sync", "time"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
+async-trait = "0.1"
+
+# Vector store (gRPC)
+qdrant-client = { version = "1.19", default-features = false, features = ["serde"] }
+tonic = { version = "0.14", default-features = false }
+
+# Embeddings
+fastembed = { version = "7.1", optional = true, default-features = false, features = ["ort-download-binaries-rustls-tls", "hf-hub-rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "http2"] }
+
+# Data
+polars = { version = "0.55", default-features = false, features = ["csv", "parquet", "json", "dtype-date", "dtype-datetime"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-polars = { version = "0.50.0", default-features = false, features = ["lazy", "csv", "parquet", "json"] }
-qdrant-client = "1.8"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-anyhow = "1.0"
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
-uuid = { version = "1.4", features = ["v4"] }
-env_logger = "0.11"
-log = "0.4"
-async-trait = "0.1"
-bytes = "1.0"
-dotenvy = "0.15"
+uuid = { version = "1.18", features = ["v4", "v5"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
-utoipa = { version = "5", features = ["actix_extras"] }
-utoipa-swagger-ui = { version = "9", features = ["actix-web"] }
+
+# Errors, config, telemetry
+thiserror = "2"
+anyhow = "1"
+dotenvy = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "fmt"] }
 
 [dev-dependencies]
 tempfile = "3"
+actix-http = "3"
 
 [profile.release]
 lto = "thin"
@@ -35,4 +79,9 @@ strip = true
 
 [profile.dev]
 opt-level = 0
-debug = true
+debug = "line-tables-only"
+
+# Keep heavy numeric deps reasonably fast in debug builds (tests, local dev).
+[profile.dev.package."*"]
+opt-level = 2
+debug = false

@@ -1,0 +1,11 @@
+# Keep the build context small and free of secrets.
+target/
+.git/
+.github/
+.idea/
+.vscode/
+.cache/
+data/
+.env
+*.log
+e2e/data/

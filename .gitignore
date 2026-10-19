@@ -1,2 +1,11 @@
 /target
 .env
+
+# Local runtime data and model cache
+/data
+/.cache
+
+# Editors
+.idea/
+.vscode/
+*.swp
