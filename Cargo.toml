@@ -32,7 +32,7 @@ fastembed = ["dep:fastembed"]
 [dependencies]
 # HTTP
 actix-web = "4.17"
-actix-multipart = "0.7"
+actix-multipart = "0.8"
 actix-cors = "0.7"
 actix-web-prom = "0.10"
 tracing-actix-web = "0.7"
