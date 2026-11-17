@@ -1,4 +1,4 @@
-//! Qdrant backend (gRPC, `qdrant-client` 1.19).
+//! Qdrant backend (gRPC, `qdrant-client` 1.20).
 //!
 //! Layout:
 //! * `{prefix}_items` — one point per item; id = UUIDv5(dataset, item_id).

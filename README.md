@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/101t/recom_service/actions/workflows/ci.yml/badge.svg)](https://github.com/101t/recom_service/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-![Qdrant](https://img.shields.io/badge/Qdrant-1.19-dc244c)
+![Qdrant](https://img.shields.io/badge/Qdrant-1.20-dc244c)
 ![Rust](https://img.shields.io/badge/rust-1.88%2B-orange)
 
 A self-hosted recommendation API written in Rust. Upload a catalog (CSV, JSON, Parquet, …),
@@ -45,7 +45,7 @@ POST /api/v1/datasets/shop/recommend   {"query": "zapatillas para correr", "limi
   pagination; score threshold; MMR **diversity**.
 - **Real-time personalization** — interactions (views, purchases, ratings, dislikes) update a
   user's profile immediately; items they already saw are excluded automatically.
-- **Built for Qdrant 1.19** — gRPC client, multitenant collections with a tenant payload index,
+- **Built for Qdrant 1.20** — gRPC client, multitenant collections with a tenant payload index,
   Query API (`recommend`, MMR), optional int8 quantization, payload indexes, sharding/replication.
 - **Retrain any time** — raw data is kept as Parquet/JSONL; `POST /datasets/{id}/train` rebuilds the
   index (e.g. after switching models) from the stored history.
